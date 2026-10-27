@@ -1,0 +1,37 @@
+name: build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: Windows-VST3
+          - os: macos-latest
+            name: macOS-VST3
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build plugin
+        run: cmake --build build --config Release --target MidiStackLens_VST3 --parallel 4
+
+      - name: Build and run chord tests
+        run: |
+          cmake --build build --config Release --target chord_test
+          ctest --test-dir build -C Release --output-on-failure
+
+      - name: Upload VST3
+        uses: actions/upload-artifact@v4
+        with:
+          name: MidiStackLens-${{ matrix.name }}
+          path: build/MidiStackLens_artefacts/Release/VST3/
