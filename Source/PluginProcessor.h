@@ -5,6 +5,8 @@
 #include <array>
 #include <atomic>
 
+#include "Recording.h"
+
 class MidiStackLensProcessor : public juce::AudioProcessor
 {
 public:
@@ -19,7 +21,7 @@ public:
     MidiStackLensProcessor();
     ~MidiStackLensProcessor() override = default;
 
-    void prepareToPlay (double, int) override {}
+    void prepareToPlay (double sr, int) override { if (sr > 0.0) sampleRate.store (sr); }
     void releaseResources() override {}
     bool isBusesLayoutSupported (const BusesLayout& layouts) const override;
     void processBlock (juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
@@ -44,6 +46,18 @@ public:
 
     bool popEvent (MidiEvt& out);
 
+    // ---- 録音(MIDIを時刻つきで記録。.mid や動画の書き出しに使う) ----
+    enum RecState { RecIdle = 0, RecArmed = 1, RecRunning = 2 };
+    std::atomic<int> recState { RecIdle };
+    std::atomic<double> recSeconds { 0.0 };  // 録音中・録音済みの長さ
+    std::atomic<bool> recFull { false };     // 記録の上限に達して止まった
+
+    // 録音ボタン: 「再生に連動」がオンでDAWが止まっているときは、再生が始まるまで待機する
+    void armRecording();
+    void stopRecording();
+    bool hasRecording() const { return recSeconds.load() > 0.0 && recState.load() == RecIdle; }
+    msl::Recording copyRecording();  // 録音していないときに呼ぶ
+
     juce::AudioProcessorValueTreeState apvts;
 
     // 今押さえているノートのベロシティ(0 = 離している)。エディタを開いた瞬間の状態復元に使う
@@ -59,11 +73,26 @@ public:
 
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
+    void startRecordingLocked (double bpmNow, bool hostPos, double ppqNow);
     void push (MidiEvt e) noexcept;
 
     static constexpr int kFifoSize = 2048;
     juce::AbstractFifo fifo { kFifoSize };
     std::array<MidiEvt, kFifoSize> fifoBuf;
+
+    std::atomic<double> sampleRate { 44100.0 };
+    std::atomic<float>* pRecFollow = nullptr;
+
+    juce::SpinLock recLock;  // オーディオスレッドは tryLock のみ(待たない)
+    msl::Recording rec;
+    juce::int64 recSamples = 0;
+    bool recHostDriven = false;
+    bool recPrevPlaying = false;
+    double recLastKeySec = -1.0;
+    msl::TransportKey recLastKey;
+
+    static constexpr size_t kMaxRecEvents = 600000;
+    static constexpr size_t kMaxRecKeys = 120000;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MidiStackLensProcessor)
 };
