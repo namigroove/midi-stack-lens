@@ -10,6 +10,7 @@
 #include "Analysis.h"
 #include "ChordDetector.h"
 #include "PluginProcessor.h"
+#include "Recording.h"
 
 // パネルを並べた分析画面。
 //   A  STACK / ROLL      履歴ロール + 鍵盤
@@ -17,10 +18,13 @@
 //   C  HARMONY / CIRCLE  五度圏、音名の出現量、推定キー
 //   D  PROGRESSION       コード進行の履歴(クリックでコピー)
 //   E  VELOCITY          押さえた音ごとの強さのバランス
+class VideoExporter;
+
 class MidiStackView : public juce::Component, private juce::Timer
 {
 public:
-    explicit MidiStackView (MidiStackLensProcessor&);
+    // offline = true: 動画の書き出し用。タイマーもライブのMIDIも使わず、仮想の時計で動く
+    explicit MidiStackView (MidiStackLensProcessor&, bool offline = false);
     ~MidiStackView() override;
 
     void paint (juce::Graphics&) override;
@@ -31,6 +35,11 @@ public:
     juce::Colour backgroundColour() const { return theme.bgTop; }
 
     std::function<void (bool dark)> onThemeChanged;
+    std::function<void()> onMidiClick, onVideoClick;
+
+    // ---- 動画の書き出し(offline = true のとき) ----
+    void offlineBegin (const msl::Recording&);     // setSize の後に呼ぶ。状態を空にして先頭へ
+    void offlineFrame (double t, double dt);       // 時刻 t までのイベントを反映して、表示を t にする
 
 private:
     struct Bar
@@ -76,7 +85,22 @@ private:
         juce::Colour rank[7];
     };
 
+    struct Transport
+    {
+        double ppq = -1.0;
+        double barStart = -1.0;
+        double bpm = 120.0;
+        int num = 4;
+        int den = 4;
+        bool playing = false;
+    };
+
     void timerCallback() override;
+    void stepModel (double now, double dt);
+    Transport transport() const;
+    double bpmNow() const;
+    double clockNow() const;
+    void paintRecChips (juce::Graphics&);
     void apply (const MidiStackLensProcessor::MidiEvt&, double now);
     void updateChord (double now);
     void updateKey (double now, double dt);
@@ -115,6 +139,11 @@ private:
     void paintVelocityPanel (juce::Graphics&);
 
     MidiStackLensProcessor& proc;
+    const bool offline;
+    const msl::Recording* offRec = nullptr;
+    size_t offIdx = 0;
+    double offNow = 0.0;
+    msl::TransportKey offTp;
 
     std::atomic<float>* pNotation;
     std::atomic<float>* pAccidental;
@@ -127,6 +156,7 @@ private:
     std::atomic<float>* pChordHistory;
     std::atomic<float>* pTheme;
     std::atomic<float>* pScaleHint;
+    std::atomic<float>* pRecFollow;
 
     Theme theme;
     bool dark = false;
@@ -165,6 +195,7 @@ private:
     juce::Rectangle<float> titleRect, panelA, panelB, panelC, panelD, panelE;
     juce::Rectangle<float> rollRect, keyRect;
     juce::Rectangle<float> copyChip, clearChip;
+    juce::Rectangle<float> recChip, followChip, midChip, mp4Chip;
     std::array<float, 128> kx {}, kw {};
     int loNote = 21, hiNote = 108;
     int builtRange = -1;
@@ -190,6 +221,16 @@ private:
     void addCombo (juce::ComboBox&, const char* paramId);
     void applyTheme (bool dark);
 
+    // ---- 書き出し(.mid / mp4) ----
+    struct VideoRequest;
+    void exportMidi();
+    void exportVideo();
+    void withFfmpeg (std::function<void (juce::File)> then);
+    void askWavThenOutput (std::shared_ptr<VideoRequest>);
+    void askOutput (std::shared_ptr<VideoRequest>);
+    void runExport (std::shared_ptr<VideoRequest>);
+    void showResult (bool ok, const juce::String& message);
+
     MidiStackLensProcessor& proc;
     juce::LookAndFeel_V4 lnf;
 
@@ -199,6 +240,10 @@ private:
     std::unique_ptr<ButtonAttach> degreesAttachment, historyAttachment, scaleAttachment;
 
     MidiStackView view;
+
+    std::unique_ptr<juce::FileChooser> chooser;
+    std::unique_ptr<VideoExporter> exporter;
+    std::unique_ptr<juce::AlertWindow> progressWindow;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MidiStackLensEditor)
 };

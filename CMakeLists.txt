@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(MidiStackLens VERSION 0.2.0 LANGUAGES C CXX)
+project(MidiStackLens VERSION 0.3.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -40,6 +40,8 @@ juce_add_plugin(MidiStackLens
 target_sources(MidiStackLens PRIVATE
     Source/ChordDetector.cpp
     Source/Analysis.cpp
+    Source/Recording.cpp
+    Source/VideoExport.cpp
     Source/PluginProcessor.cpp
     Source/PluginEditor.cpp)
 
@@ -72,3 +74,53 @@ add_executable(analysis_test tests/analysis_test.cpp Source/Analysis.cpp Source/
 target_include_directories(analysis_test PRIVATE Source)
 target_compile_options(analysis_test PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
 add_test(NAME analysis_test COMMAND analysis_test)
+
+add_executable(recording_test tests/recording_test.cpp Source/Recording.cpp)
+target_include_directories(recording_test PRIVATE Source)
+target_compile_options(recording_test PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
+add_test(NAME recording_test COMMAND recording_test)
+
+# 動画書き出しの動作確認用(画面なしで、デモの演奏を mp4 にする)。普段のビルドには入れない:
+#   cmake -DMSL_BUILD_EXPORT_DEMO=ON ...  →  MslExportDemo <out.mp4> [land|portrait|square] [fps] [wav]
+option(MSL_BUILD_EXPORT_DEMO "Build the headless video export demo" OFF)
+if(MSL_BUILD_EXPORT_DEMO)
+    juce_add_console_app(MslExportDemo PRODUCT_NAME "MslExportDemo")
+    target_sources(MslExportDemo PRIVATE
+        tests/export_demo.cpp
+        Source/ChordDetector.cpp
+        Source/Analysis.cpp
+        Source/Recording.cpp
+        Source/VideoExport.cpp
+        Source/PluginProcessor.cpp
+        Source/PluginEditor.cpp)
+    target_include_directories(MslExportDemo PRIVATE Source)
+    target_compile_definitions(MslExportDemo PRIVATE
+        JucePlugin_Name="MIDI Stack Lens"
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_DISPLAY_SPLASH_SCREEN=0)
+    target_link_libraries(MslExportDemo
+        PRIVATE juce::juce_audio_utils
+        PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
+
+    # 録音処理(再生連動・開始/停止・サンプル位置)の確認。ctest でも動く
+    juce_add_console_app(MslProcessorRecTest PRODUCT_NAME "MslProcessorRecTest")
+    target_sources(MslProcessorRecTest PRIVATE
+        tests/processor_rec_test.cpp
+        Source/ChordDetector.cpp
+        Source/Analysis.cpp
+        Source/Recording.cpp
+        Source/VideoExport.cpp
+        Source/PluginProcessor.cpp
+        Source/PluginEditor.cpp)
+    target_include_directories(MslProcessorRecTest PRIVATE Source)
+    target_compile_definitions(MslProcessorRecTest PRIVATE
+        JucePlugin_Name="MIDI Stack Lens"
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_DISPLAY_SPLASH_SCREEN=0)
+    target_link_libraries(MslProcessorRecTest
+        PRIVATE juce::juce_audio_utils
+        PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
+    add_test(NAME processor_rec_test COMMAND MslProcessorRecTest)
+endif()

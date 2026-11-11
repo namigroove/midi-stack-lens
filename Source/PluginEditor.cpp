@@ -1,5 +1,7 @@
 #include "PluginEditor.h"
 
+#include "VideoExport.h"
+
 #include <algorithm>
 #include <cmath>
 #include <iterator>
@@ -61,7 +63,7 @@ const float kTwoPi = juce::MathConstants<float>::twoPi;
 // =====================================================================================
 //  MidiStackView
 // =====================================================================================
-MidiStackView::MidiStackView (MidiStackLensProcessor& p) : proc (p)
+MidiStackView::MidiStackView (MidiStackLensProcessor& p, bool isOffline) : proc (p), offline (isOffline)
 {
     auto& s = proc.apvts;
     pNotation     = s.getRawParameterValue ("notation");
@@ -75,8 +77,13 @@ MidiStackView::MidiStackView (MidiStackLensProcessor& p) : proc (p)
     pChordHistory = s.getRawParameterValue ("chordHistory");
     pTheme        = s.getRawParameterValue ("theme");
     pScaleHint    = s.getRawParameterValue ("scaleHint");
+    pRecFollow    = s.getRawParameterValue ("recFollow");
 
     applyTheme (choiceOf (pTheme) == 1);
+
+    setOpaque (true);
+    if (offline)
+        return;  // 書き出し用: タイマーも、ライブのMIDIの引き継ぎも使わない
 
     // すでに押さえているノートを引き継ぐ(エディタを開いた瞬間)
     const double now = nowSeconds();
@@ -95,8 +102,95 @@ MidiStackView::MidiStackView (MidiStackLensProcessor& p) : proc (p)
             themeParam->setValueNotifyingHost (1.0f);
     demoStart = now + 0.5;
 
-    setOpaque (true);
     startTimerHz (60);
+}
+
+// ---- 時計と再生位置(ライブ / 書き出しで切り替え) ----------------------------------------
+double MidiStackView::clockNow() const { return offline ? offNow : nowSeconds(); }
+
+double MidiStackView::bpmNow() const { return offline ? offTp.bpm : proc.bpm.load(); }
+
+MidiStackView::Transport MidiStackView::transport() const
+{
+    Transport t;
+    if (offline)
+    {
+        t.ppq = offTp.ppq;
+        t.barStart = offTp.barStartPpq;
+        t.bpm = offTp.bpm;
+        t.num = offTp.num;
+        t.den = offTp.den;
+        t.playing = offTp.playing;
+    }
+    else
+    {
+        t.ppq = proc.ppq.load();
+        t.barStart = proc.barStartPpq.load();
+        t.bpm = proc.bpm.load();
+        t.num = proc.tsNum.load();
+        t.den = proc.tsDen.load();
+        t.playing = proc.playing.load();
+    }
+    return t;
+}
+
+void MidiStackView::offlineBegin (const msl::Recording& rec)
+{
+    offRec = &rec;
+    offIdx = 0;
+    offNow = 0.0;
+    offTp = msl::transportAt (rec, 0.0);
+
+    bars.clear();
+    labels.clear();
+    progression.clear();
+    held.fill (0);
+    heldSince.fill (0.0);
+    lastNotes.clear();
+    lastLabelName = {};
+    pcWeight.fill (0.0);
+    key = {};
+    keyCandidate = {};
+    keyCandidateSince = 0.0;
+    lastKeyCheck = 0.0;
+    snap = {};
+    snapLive = false;
+    committed = true;
+    changedAt = 0.0;
+    cur = {};
+
+    applyTheme (choiceOf (pTheme) == 1);
+    rebuildKeys();
+}
+
+void MidiStackView::offlineFrame (double t, double dt)
+{
+    if (offRec == nullptr)
+        return;
+
+    offNow = t;
+    offTp = msl::transportAt (*offRec, t);
+    const auto& ev = offRec->events;
+    while (offIdx < ev.size() && ev[offIdx].sec <= t)
+    {
+        const auto& e = ev[offIdx++];
+        apply ({ e.note, e.vel, e.kind }, e.sec);
+    }
+    stepModel (t, dt);
+}
+
+void MidiStackView::stepModel (double now, double dt)
+{
+    updateChord (now);
+    updateKey (now, dt);
+
+    const double keep = windowSeconds() * 1.1;
+    bars.erase (std::remove_if (bars.begin(), bars.end(),
+                                [&] (const Bar& b) { return b.end >= 0.0 && now - b.end > keep; }),
+                bars.end());
+    labels.erase (std::remove_if (labels.begin(), labels.end(),
+                                  [&] (const ChordLabel& l) { return now - l.start > keep; }),
+                  labels.end());
 }
 
 MidiStackView::~MidiStackView() { stopTimer(); }
@@ -165,6 +259,17 @@ void MidiStackView::resized()
     titleRect = b.removeFromTop (52.0f);
     b.removeFromTop (6.0f);
 
+    // タイトルの右に 録音 / 連動 / MIDI / MP4 のチップ
+    {
+        const float h = 24.0f;
+        const float y = titleRect.getCentreY() - 4.0f - h * 0.5f;
+        float x = titleRect.getX() + 268.0f;
+        recChip    = { x, y, 96.0f, h };  x += 102.0f;
+        followChip = { x, y, 74.0f, h };  x += 80.0f;
+        midChip    = { x, y, 50.0f, h };  x += 56.0f;
+        mp4Chip    = { x, y, 54.0f, h };
+    }
+
     const float rowD = juce::jlimit (104.0f, 150.0f, totalH * 0.165f);
     const float rowB = juce::jlimit (168.0f, 250.0f, totalH * 0.27f);
 
@@ -229,7 +334,7 @@ void MidiStackView::rebuildKeys()
 
 double MidiStackView::secondsPerBeat() const
 {
-    return 60.0 / juce::jlimit (20.0, 400.0, proc.bpm.load());
+    return 60.0 / juce::jlimit (20.0, 400.0, bpmNow());
 }
 
 double MidiStackView::windowSeconds() const
@@ -527,7 +632,32 @@ void MidiStackView::runDemo (double now)
 
 void MidiStackView::mouseDown (const juce::MouseEvent& e)
 {
-    if (copyChip.contains (e.position))
+    if (offline)
+        return;
+
+    if (recChip.contains (e.position))
+    {
+        if (proc.recState.load() == MidiStackLensProcessor::RecIdle)
+            proc.armRecording();
+        else
+            proc.stopRecording();
+    }
+    else if (followChip.contains (e.position))
+    {
+        if (auto* p = proc.apvts.getParameter ("recFollow"))
+            p->setValueNotifyingHost (pRecFollow->load() > 0.5f ? 0.0f : 1.0f);
+    }
+    else if (midChip.contains (e.position))
+    {
+        if (proc.hasRecording() && onMidiClick)
+            onMidiClick();
+    }
+    else if (mp4Chip.contains (e.position))
+    {
+        if (proc.hasRecording() && onVideoClick)
+            onVideoClick();
+    }
+    else if (copyChip.contains (e.position))
         copyProgression();
     else if (clearChip.contains (e.position))
         clearHistory();
@@ -546,16 +676,7 @@ void MidiStackView::timerCallback()
     while (proc.popEvent (e))
         apply (e, now);
 
-    updateChord (now);
-    updateKey (now, dt);
-
-    const double keep = windowSeconds() * 1.1;
-    bars.erase (std::remove_if (bars.begin(), bars.end(),
-                                [&] (const Bar& b) { return b.end >= 0.0 && now - b.end > keep; }),
-                bars.end());
-    labels.erase (std::remove_if (labels.begin(), labels.end(),
-                                  [&] (const ChordLabel& l) { return now - l.start > keep; }),
-                  labels.end());
+    stepModel (now, dt);
 
     if (juce::jlimit (0, 3, choiceOf (pRange)) != builtRange || keyRect.getWidth() != builtWidth
         || keyRect.getX() != builtX)
@@ -633,6 +754,40 @@ void MidiStackView::paintChip (juce::Graphics& g, juce::Rectangle<float> r, cons
     g.drawText (text, r, juce::Justification::centred, false);
 }
 
+void MidiStackView::paintRecChips (juce::Graphics& g)
+{
+    const auto st = proc.recState.load();
+    const juce::Colour red (0xffe0524d);
+
+    juce::String recText = u8 ("● 録音");
+    if (st == MidiStackLensProcessor::RecRunning)
+    {
+        const int s = (int) proc.recSeconds.load();
+        recText = u8 ("■ 停止 ") + juce::String (s / 60) + ":" + juce::String (s % 60).paddedLeft ('0', 2);
+        paintChip (g, recChip, recText, red, juce::Colours::white);
+    }
+    else if (st == MidiStackLensProcessor::RecArmed)
+    {
+        const bool blink = std::fmod (nowSeconds(), 1.0) < 0.55;
+        paintChip (g, recChip, u8 ("● 待機中"), blink ? red : red.withAlpha (0.45f), juce::Colours::white);
+    }
+    else
+    {
+        if (proc.recFull.load())
+            recText = u8 ("● 録音(上限)");
+        paintChip (g, recChip, recText, red, red, true);
+    }
+
+    const bool follow = pRecFollow->load() > 0.5f;
+    paintChip (g, followChip, follow ? u8 ("連動 ON") : u8 ("連動 OFF"), follow ? theme.accent : theme.dim,
+               follow ? theme.accent : theme.dim, true);
+
+    const bool has = proc.hasRecording();
+    const auto c = has ? theme.accent : theme.dim.withAlpha (0.45f);
+    paintChip (g, midChip, "MIDI", c, c, true);
+    paintChip (g, mp4Chip, "MP4", c, c, true);
+}
+
 void MidiStackView::paintBackground (juce::Graphics& g)
 {
     auto b = getLocalBounds().toFloat();
@@ -652,9 +807,10 @@ void MidiStackView::paintTitle (juce::Graphics& g)
     auto r = titleRect;
 
     // 右側: BAR / BEAT / METER / BPM / KEY
-    const double q = proc.ppq.load();
-    const int num = juce::jmax (1, proc.tsNum.load());
-    const int den = juce::jmax (1, proc.tsDen.load());
+    const auto tp = transport();
+    const double q = tp.ppq;
+    const int num = juce::jmax (1, tp.num);
+    const int den = juce::jmax (1, tp.den);
     const double beatLen = 4.0 / (double) den;       // 1拍の長さ(4分音符 = 1)
     const double barLen = beatLen * (double) num;
 
@@ -662,7 +818,7 @@ void MidiStackView::paintTitle (juce::Graphics& g)
     float barProgress = 0.0f;
     if (q >= 0.0)
     {
-        double barStart = proc.barStartPpq.load();
+        double barStart = tp.barStart;
         if (barStart < 0.0 || barStart > q)
             barStart = std::floor (q / barLen) * barLen;
 
@@ -679,7 +835,7 @@ void MidiStackView::paintTitle (juce::Graphics& g)
         { "BAR", barText, 62.0f, true },
         { "BEAT", beatText, 48.0f, true },
         { "METER", juce::String (num) + "/" + juce::String (den), 62.0f, true },
-        { "BPM", juce::String (juce::roundToInt (proc.bpm.load())), 56.0f, true },
+        { "BPM", juce::String (juce::roundToInt (tp.bpm)), 56.0f, true },
         { "KEY", keyText(), 96.0f, false },
     };
 
@@ -699,6 +855,9 @@ void MidiStackView::paintTitle (juce::Graphics& g)
         g.drawText (it.value, cell.withTrimmedBottom (8.0f), juce::Justification::centredLeft, false);
         x -= 10.0f;
     }
+
+    if (! offline)
+        paintRecChips (g);
 
     // 左側: タイトル
     auto titleArea = r.withRight (juce::jmax (r.getX() + 120.0f, x));
@@ -736,8 +895,9 @@ void MidiStackView::paintRoll (juce::Graphics& g, double now)
     const auto top = rollRect.getY();
 
     // 再生中は拍の線を引く
-    const double q = proc.ppq.load();
-    if (proc.playing.load() && q >= 0.0)
+    const auto tp = transport();
+    const double q = tp.ppq;
+    if (tp.playing && q >= 0.0)
     {
         const double spb = secondsPerBeat();
         const double frac = q - std::floor (q);
@@ -1239,11 +1399,14 @@ void MidiStackView::paintProgressionPanel (juce::Graphics& g, double now)
     head.removeFromRight (6.0f);
     copyChip = head.removeFromRight (72.0f);
 
-    const bool justCopied = now - copiedAt < 1.2;
-    paintChip (g, copyChip, justCopied ? u8 ("コピー済み") : u8 ("コピー"),
-               justCopied ? theme.accent : theme.accent.withAlpha (0.9f), justCopied ? juce::Colours::white : theme.accent,
-               ! justCopied);
-    paintChip (g, clearChip, u8 ("クリア"), theme.dim, theme.dim, true);
+    if (! offline)
+    {
+        const bool justCopied = nowSeconds() - copiedAt < 1.2;
+        paintChip (g, copyChip, justCopied ? u8 ("コピー済み") : u8 ("コピー"),
+                   justCopied ? theme.accent : theme.accent.withAlpha (0.9f),
+                   justCopied ? juce::Colours::white : theme.accent, ! justCopied);
+        paintChip (g, clearChip, u8 ("クリア"), theme.dim, theme.dim, true);
+    }
 
     if (progression.empty())
     {
@@ -1370,7 +1533,7 @@ void MidiStackView::paintVelocityPanel (juce::Graphics& g)
 // ---- 全体 ----------------------------------------------------------------------------
 void MidiStackView::paint (juce::Graphics& g)
 {
-    const double now = nowSeconds();
+    const double now = clockNow();
 
     paintBackground (g);
     paintTitle (g);
@@ -1428,6 +1591,8 @@ MidiStackLensEditor::MidiStackLensEditor (MidiStackLensProcessor& p)
 
     addAndMakeVisible (view);
     view.onThemeChanged = [this] (bool dark) { applyTheme (dark); };
+    view.onMidiClick = [this] { exportMidi(); };
+    view.onVideoClick = [this] { exportVideo(); };
     applyTheme (view.isDark());
 
     setResizable (true, true);
@@ -1438,7 +1603,265 @@ MidiStackLensEditor::MidiStackLensEditor (MidiStackLensProcessor& p)
 MidiStackLensEditor::~MidiStackLensEditor()
 {
     view.onThemeChanged = nullptr;
+    view.onMidiClick = nullptr;
+    view.onVideoClick = nullptr;
+
+    if (progressWindow != nullptr)
+        progressWindow->exitModalState (0);
+    progressWindow.reset();
+    exporter.reset();
+    chooser.reset();
     setLookAndFeel (nullptr);
+}
+
+// =====================================================================================
+//  書き出し(.mid / mp4)
+// =====================================================================================
+struct MidiStackLensEditor::VideoRequest
+{
+    msl::Recording rec;
+    int width = 1920, height = 1080, fps = 30;
+    double wavOffset = 0.0;
+    juce::File wav, out, ffmpeg;
+};
+
+void MidiStackLensEditor::exportMidi()
+{
+    auto rec = std::make_shared<msl::Recording> (proc.copyRecording());
+    if (rec->empty())
+    {
+        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, u8 ("録音がありません"),
+                                                u8 ("演奏中に「● 録音」を押して、MIDIを記録してください。"));
+        return;
+    }
+
+    const auto def = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("MIDI Stack Lens.mid");
+    chooser = std::make_unique<juce::FileChooser> (u8 (".mid の保存先"), def, "*.mid");
+    juce::Component::SafePointer<MidiStackLensEditor> safe (this);
+    chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles
+                              | juce::FileBrowserComponent::warnAboutOverwriting,
+                          [safe, rec] (const juce::FileChooser& fc)
+                          {
+                              auto f = fc.getResult();
+                              if (safe == nullptr || f == juce::File())
+                                  return;
+                              f = f.withFileExtension ("mid");
+                              const auto bytes = msl::toMidiFile (*rec);
+                              if (f.replaceWithData (bytes.data(), bytes.size()))
+                                  juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon,
+                                                                          u8 ("保存しました"), f.getFullPathName());
+                              else
+                                  juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon,
+                                                                          u8 ("保存できませんでした"), f.getFullPathName());
+                          });
+}
+
+void MidiStackLensEditor::withFfmpeg (std::function<void (juce::File)> then)
+{
+    const auto saved = proc.apvts.state.getProperty ("ffmpegPath").toString();
+    const auto found = VideoExporter::findFfmpeg (saved);
+    if (found.existsAsFile())
+    {
+        then (found);
+        return;
+    }
+
+    juce::Component::SafePointer<MidiStackLensEditor> safe (this);
+    auto* w = new juce::AlertWindow (u8 ("ffmpeg が必要です"),
+                                     u8 ("mp4 にまとめるのに、無料の ffmpeg を使います(このプラグインには入っていません)。\n"
+                                         "入れたあと、ffmpeg の場所を教えてください。\n"
+                                         "Windows: 「winget install ffmpeg」\nMac: 「brew install ffmpeg」"),
+                                     juce::MessageBoxIconType::InfoIcon, this);
+    w->addButton (u8 ("ffmpegの場所を選ぶ"), 1, juce::KeyPress (juce::KeyPress::returnKey));
+    w->addButton (u8 ("やめる"), 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    w->enterModalState (true,
+                        juce::ModalCallbackFunction::create (
+                            [safe, then] (int r)
+                            {
+                                if (r != 1 || safe == nullptr)
+                                    return;
+                                safe->chooser = std::make_unique<juce::FileChooser> (u8 ("ffmpeg を選ぶ"), juce::File(), "*");
+                                safe->chooser->launchAsync (juce::FileBrowserComponent::openMode
+                                                                | juce::FileBrowserComponent::canSelectFiles,
+                                                            [safe, then] (const juce::FileChooser& fc)
+                                                            {
+                                                                const auto f = fc.getResult();
+                                                                if (safe == nullptr || ! f.existsAsFile())
+                                                                    return;
+                                                                safe->proc.apvts.state.setProperty ("ffmpegPath",
+                                                                                                    f.getFullPathName(), nullptr);
+                                                                then (f);
+                                                            });
+                            }),
+                        true);
+}
+
+void MidiStackLensEditor::exportVideo()
+{
+    auto req = std::make_shared<VideoRequest>();
+    req->rec = proc.copyRecording();
+    if (req->rec.empty())
+    {
+        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, u8 ("録音がありません"),
+                                                u8 ("演奏中に「● 録音」を押して、MIDIを記録してください。"));
+        return;
+    }
+
+    juce::Component::SafePointer<MidiStackLensEditor> safe (this);
+    withFfmpeg (
+        [safe, req] (juce::File ffmpeg)
+        {
+            if (safe == nullptr)
+                return;
+            req->ffmpeg = ffmpeg;
+
+            auto* w = new juce::AlertWindow (u8 ("動画(MP4)に書き出す"),
+                                             u8 ("録音した演奏を、一定のコマ数で動画にします。\n"
+                                                 "音は、DAWで書き出したWAVを選ぶと合わせます。"),
+                                             juce::MessageBoxIconType::NoIcon, safe.getComponent());
+            w->addComboBox ("fmt", { u8 ("横  1920x1080 (16:9)"), u8 ("縦  1080x1920 (9:16)  SNS向け"),
+                                     u8 ("正方形  1080x1080"), u8 ("横  1280x720") },
+                            u8 ("サイズ"));
+            w->addComboBox ("fps", { "30 fps", "60 fps" }, u8 ("コマ数"));
+            w->addTextEditor ("offset", juce::String (msl::defaultWavOffset (req->rec), 3),
+                              u8 ("WAVの頭出し(秒)  WAVの先頭が、録音の頭より何秒前か"));
+            w->getComboBoxComponent ("fmt")->setSelectedItemIndex (0, juce::dontSendNotification);
+            w->getComboBoxComponent ("fps")->setSelectedItemIndex (0, juce::dontSendNotification);
+            w->addButton (u8 ("WAVを選んで書き出す"), 1, juce::KeyPress (juce::KeyPress::returnKey));
+            w->addButton (u8 ("WAVなしで書き出す"), 2);
+            w->addButton (u8 ("やめる"), 0, juce::KeyPress (juce::KeyPress::escapeKey));
+
+            w->enterModalState (
+                true,
+                juce::ModalCallbackFunction::create (
+                    [safe, req, w] (int r)
+                    {
+                        if (r == 0 || safe == nullptr)
+                            return;
+
+                        static const int sizes[4][2] = { { 1920, 1080 }, { 1080, 1920 }, { 1080, 1080 }, { 1280, 720 } };
+                        const int fi = juce::jlimit (0, 3, w->getComboBoxComponent ("fmt")->getSelectedItemIndex());
+                        req->width = sizes[fi][0];
+                        req->height = sizes[fi][1];
+                        req->fps = w->getComboBoxComponent ("fps")->getSelectedItemIndex() == 1 ? 60 : 30;
+                        req->wavOffset = w->getTextEditorContents ("offset").getDoubleValue();
+
+                        if (r == 1)
+                            safe->askWavThenOutput (req);
+                        else
+                            safe->askOutput (req);
+                    }),
+                true);
+        });
+}
+
+void MidiStackLensEditor::askWavThenOutput (std::shared_ptr<VideoRequest> req)
+{
+    juce::Component::SafePointer<MidiStackLensEditor> safe (this);
+    chooser = std::make_unique<juce::FileChooser> (u8 ("DAWで書き出したWAVを選ぶ"),
+                                                   juce::File::getSpecialLocation (juce::File::userDocumentsDirectory),
+                                                   "*.wav;*.aif;*.aiff;*.flac");
+    chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                          [safe, req] (const juce::FileChooser& fc)
+                          {
+                              const auto f = fc.getResult();
+                              if (safe == nullptr || ! f.existsAsFile())
+                                  return;  // 選ばなかったら、そこで中止
+                              req->wav = f;
+                              safe->askOutput (req);
+                          });
+}
+
+void MidiStackLensEditor::askOutput (std::shared_ptr<VideoRequest> req)
+{
+    juce::Component::SafePointer<MidiStackLensEditor> safe (this);
+    const auto def = (req->wav.existsAsFile() ? req->wav.getParentDirectory()
+                                              : juce::File::getSpecialLocation (juce::File::userDocumentsDirectory))
+                         .getChildFile ("MIDI Stack Lens.mp4");
+    chooser = std::make_unique<juce::FileChooser> (u8 ("mp4 の保存先"), def, "*.mp4");
+    chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles
+                              | juce::FileBrowserComponent::warnAboutOverwriting,
+                          [safe, req] (const juce::FileChooser& fc)
+                          {
+                              auto f = fc.getResult();
+                              if (safe == nullptr || f == juce::File())
+                                  return;
+                              req->out = f.withFileExtension ("mp4");
+                              safe->runExport (req);
+                          });
+}
+
+void MidiStackLensEditor::runExport (std::shared_ptr<VideoRequest> req)
+{
+    if (exporter != nullptr)
+        return;  // 書き出し中
+
+    VideoExporter::Options o;
+    o.rec = req->rec;
+    o.width = req->width;
+    o.height = req->height;
+    o.fps = req->fps;
+    o.wav = req->wav;
+    o.wavOffset = req->wavOffset;
+    o.out = req->out;
+    o.ffmpeg = req->ffmpeg;
+
+    exporter = std::make_unique<VideoExporter> (proc, std::move (o));
+
+    juce::String error;
+    if (! exporter->start (error))
+    {
+        exporter.reset();
+        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, u8 ("書き出せません"), error);
+        return;
+    }
+
+    juce::Component::SafePointer<MidiStackLensEditor> safe (this);
+    exporter->onFinished = [safe] (bool ok, const juce::String& message)
+    {
+        // このコールバックの中で exporter を消さないよう、あとで処理する
+        juce::MessageManager::callAsync ([safe, ok, message]
+                                         {
+                                             if (safe == nullptr)
+                                                 return;
+                                             if (safe->progressWindow != nullptr)
+                                                 safe->progressWindow->exitModalState (-1);
+                                             safe->progressWindow.reset();
+                                             safe->exporter.reset();
+                                             safe->showResult (ok, message);
+                                         });
+    };
+
+    progressWindow = std::make_unique<juce::AlertWindow> (u8 ("書き出し中…"),
+                                                          u8 ("画面を1コマずつ描いて、mp4 にしています。"),
+                                                          juce::MessageBoxIconType::NoIcon, this);
+    progressWindow->addProgressBarComponent (exporter->progress);
+    progressWindow->addButton (u8 ("キャンセル"), 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    progressWindow->enterModalState (true,
+                                     juce::ModalCallbackFunction::create (
+                                         [safe] (int r)
+                                         {
+                                             if (r == 0 && safe != nullptr && safe->exporter != nullptr)
+                                                 safe->exporter->cancel();
+                                         }),
+                                     false);
+}
+
+void MidiStackLensEditor::showResult (bool ok, const juce::String& message)
+{
+    if (! ok)
+    {
+        if (message != u8 ("キャンセルしました"))
+            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, u8 ("書き出せませんでした"),
+                                                    message);
+        return;
+    }
+
+    const juce::File f (message);
+    auto* w = new juce::AlertWindow (u8 ("書き出しました"), f.getFullPathName(), juce::MessageBoxIconType::InfoIcon, this);
+    w->addButton (u8 ("フォルダで見る"), 1, juce::KeyPress (juce::KeyPress::returnKey));
+    w->addButton (u8 ("閉じる"), 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    w->enterModalState (true, juce::ModalCallbackFunction::create ([f] (int r) { if (r == 1) f.revealToUser(); }), true);
 }
 
 void MidiStackLensEditor::applyTheme (bool dark)

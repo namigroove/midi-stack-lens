@@ -31,6 +31,22 @@ MIDIの積み方(ボイシング)を鍵盤で見るためのVST3。音は出さ�
 履歴の長さは「拍」で決まります。DAW のテンポに合わせて流れる速さが変わります(テンポが取れないときは 120 BPM)。
 オクターブ表記は C3 = MIDIノート60 です。
 
+## 録音と動画(MP4)の書き出し
+
+演奏をMIDIで記録して、あとから `.mid` や動画にできます。タイトルの右にあるチップで操作します。
+
+| チップ | はたらき |
+|---|---|
+| ● 録音 | 録音を始める / 止める。「連動 ON」のときは、DAWの再生を押した瞬間に始まり、停止で自動的に止まる |
+| 連動 ON / OFF | OFF にすると、DAWが止まっていても、押した瞬間から録音する(Standalone版や、鍵盤を弾くだけのとき) |
+| MIDI | 録音を標準MIDIファイル(.mid)として保存。テンポの変化も入る |
+| MP4 | 録音を動画にする。サイズは 横16:9(1920x1080、1280x720)/ 縦9:16(1080x1920、SNS向け)/ 正方形、30 / 60 fps |
+
+- 録音はサンプル数で時間を数えるので、DAWのオフライン書き出し中でもずれません。録音できるのは1回分(次の録音を始めるまで残る)で、DAWのプロジェクトを閉じると消えます。
+- 動画は、記録したMIDIから1コマずつ画面を描いて作ります。DAWの再生とは関係ないので、コマ落ちしません。いま画面で選んでいるテーマ・鍵盤の範囲・履歴の長さ・色の付け方で描きます。
+- 音は、DAWで書き出したWAVを選ぶと動画に合わせます(選ばなければ無音)。「WAVの頭出し」には、WAVの先頭が録音の頭より何秒前かを入れます。DAWが1小節目から書き出していて、途中から録音したときは、最初に入っている値のままで合います。
+- mp4 にまとめる部分は、お使いのPCの **ffmpeg**(無料)を使います。プラグインには入っていません。見つからないときは、場所を選ぶ画面が出ます(Windows: `winget install ffmpeg`、Mac: `brew install ffmpeg`)。
+
 ## ビルド
 
 CMake と C++17 のコンパイラがあれば、JUCE は自動で取得されます。
@@ -38,7 +54,7 @@ CMake と C++17 のコンパイラがあれば、JUCE は自動で取得され�
 ```
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config Release --target MidiStackLens_VST3
-ctest --test-dir build -C Release     # コード判定・ボイシング分析の単体テスト
+ctest --test-dir build -C Release     # コード判定・ボイシング分析・録音の単体テスト
 ```
 
 - Windows: `build/MidiStackLens_artefacts/Release/VST3/MIDI Stack Lens.vst3` を `C:\Program Files\Common Files\VST3\` へ
@@ -52,6 +68,7 @@ ctest --test-dir build -C Release     # コード判定・ボイシング分析�
 - DAW ではインストゥルメントとして立ち上げて、MIDIトラックの出力先にするか、見たいトラックのMIDIを送り込みます。
   MIDIはそのまま出力に素通しされます。
 - Standalone 版も一緒に作られるので、DAW なしでMIDIキーボードをつないで試せます。
+- 動画の書き出しを画面なしで試す: `cmake -B build -DMSL_BUILD_EXPORT_DEMO=ON` でビルドして、`MslExportDemo out.mp4 portrait 30` を実行(ffmpeg が必要。デモの演奏を縦動画にします)。
 
 ## コード判定の仕組み
 
