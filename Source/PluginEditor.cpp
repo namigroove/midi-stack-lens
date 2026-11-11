@@ -1431,7 +1431,7 @@ MidiStackLensEditor::MidiStackLensEditor (MidiStackLensProcessor& p)
     applyTheme (view.isDark());
 
     setResizable (true, true);
-    setResizeLimits (860, 600, 2600, 1600);
+    setResizeLimits (960, 620, 2600, 1600);
     setSize (1040, 780);
 }
 
