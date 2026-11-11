@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(MidiStackLens VERSION 0.1.0 LANGUAGES C CXX)
+project(MidiStackLens VERSION 0.2.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -39,6 +39,7 @@ juce_add_plugin(MidiStackLens
 
 target_sources(MidiStackLens PRIVATE
     Source/ChordDetector.cpp
+    Source/Analysis.cpp
     Source/PluginProcessor.cpp
     Source/PluginEditor.cpp)
 
@@ -60,9 +61,14 @@ target_link_libraries(MidiStackLens
         juce::juce_recommended_lto_flags
         juce::juce_recommended_warning_flags)
 
-# コード判定だけの単体テスト: ctest で実行
+# コード判定・ボイシング分析の単体テスト: ctest で実行
 enable_testing()
 add_executable(chord_test tests/chord_test.cpp Source/ChordDetector.cpp)
 target_include_directories(chord_test PRIVATE Source)
 target_compile_options(chord_test PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
 add_test(NAME chord_test COMMAND chord_test)
+
+add_executable(analysis_test tests/analysis_test.cpp Source/Analysis.cpp Source/ChordDetector.cpp)
+target_include_directories(analysis_test PRIVATE Source)
+target_compile_options(analysis_test PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
+add_test(NAME analysis_test COMMAND analysis_test)
