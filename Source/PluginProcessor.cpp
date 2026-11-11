@@ -33,13 +33,18 @@ juce::AudioProcessorValueTreeState::ParameterLayout MidiStackLensProcessor::crea
     layout.add (choice ("keyLabels", "鍵盤の音名", { "音名 Cだけ", "音名 全部", "音名 なし" }, 0));
     layout.add (choice ("range", "鍵盤の範囲", { "鍵盤 88", "鍵盤 61", "鍵盤 49", "鍵盤 37" }, 0));
     layout.add (choice ("window", "履歴の長さ", { "履歴 2拍", "履歴 4拍", "履歴 8拍", "履歴 16拍" }, 2));
-    layout.add (choice ("colorMode", "色の付け方", { "色 積み順", "色 音名", "色 強さ" }, 0));
+    layout.add (choice ("colorMode", "色の付け方", { "色 積み順", "色 音名", "色 強さ", "色 スケール" }, 0));
+    layout.add (choice ("theme", "テーマ", { "テーマ ライト", "テーマ ダーク" }, 0));
 
     layout.add (std::make_unique<juce::AudioParameterBool> (
         juce::ParameterID { "degrees", 1 }, juce::String::fromUTF8 ("度数"), true,
         juce::AudioParameterBoolAttributes().withAutomatable (false)));
     layout.add (std::make_unique<juce::AudioParameterBool> (
         juce::ParameterID { "chordHistory", 1 }, juce::String::fromUTF8 ("コード履歴"), true,
+        juce::AudioParameterBoolAttributes().withAutomatable (false)));
+
+    layout.add (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { "scaleHint", 1 }, juce::String::fromUTF8 ("スケール"), true,
         juce::AudioParameterBoolAttributes().withAutomatable (false)));
 
     return layout;
@@ -106,11 +111,45 @@ void MidiStackLensProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
         }
     }
 
+    bool gotPosition = false;
     if (auto* ph = getPlayHead())
+    {
         if (auto pos = ph->getPosition())
+        {
             if (auto b = pos->getBpm())
                 if (*b > 20.0 && *b < 400.0)
                     bpm.store (*b);
+
+            if (auto ts = pos->getTimeSignature())
+            {
+                if (ts->numerator > 0 && ts->denominator > 0)
+                {
+                    tsNum.store (ts->numerator);
+                    tsDen.store (ts->denominator);
+                }
+            }
+
+            if (auto q = pos->getPpqPosition())
+            {
+                ppq.store (*q);
+                gotPosition = true;
+
+                if (auto bs = pos->getPpqPositionOfLastBarStart())
+                    barStartPpq.store (*bs);
+                else
+                    barStartPpq.store (-1.0);
+            }
+
+            playing.store (pos->getIsPlaying());
+        }
+    }
+
+    if (! gotPosition)
+    {
+        ppq.store (-1.0);
+        barStartPpq.store (-1.0);
+        playing.store (false);
+    }
 }
 
 juce::AudioProcessorEditor* MidiStackLensProcessor::createEditor()

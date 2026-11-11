@@ -50,6 +50,13 @@ public:
     std::array<std::atomic<uint8_t>, 128> heldVel;
     std::atomic<double> bpm { 120.0 };
 
+    // DAW の再生位置(取れないときは ppq = -1)
+    std::atomic<double> ppq { -1.0 };
+    std::atomic<double> barStartPpq { -1.0 };
+    std::atomic<int> tsNum { 4 };
+    std::atomic<int> tsDen { 4 };
+    std::atomic<bool> playing { false };
+
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
     void push (MidiEvt e) noexcept;

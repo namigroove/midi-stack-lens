@@ -25,9 +25,9 @@ jobs:
       - name: Build plugin
         run: cmake --build build --config Release --target MidiStackLens_VST3 --parallel 4
 
-      - name: Build and run chord tests
+      - name: Build and run tests
         run: |
-          cmake --build build --config Release --target chord_test
+          cmake --build build --config Release --target chord_test analysis_test
           ctest --test-dir build -C Release --output-on-failure
 
       - name: Upload VST3
