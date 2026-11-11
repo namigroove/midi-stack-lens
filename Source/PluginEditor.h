@@ -83,6 +83,7 @@ private:
     void rebuildKeys();
     void applyTheme (bool wantDark);
     void clearHistory();
+    void runDemo (double now);
     void copyProgression();
 
     int choiceOf (std::atomic<float>* p) const { return (int) p->load(); }
@@ -153,6 +154,11 @@ private:
     double lastTick = 0.0;
 
     double copiedAt = -10.0;
+
+    // 環境変数 MSL_DEMO=1 で起動すると、MIDIなしでコードを順に鳴らした状態を表示する(画面確認用)
+    bool demo = false;
+    double demoStart = 0.0;
+    int demoStep = -1;
 
     // レイアウト
     juce::Rectangle<float> titleRect, panelA, panelB, panelC, panelD, panelE;

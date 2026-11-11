@@ -35,3 +35,35 @@ jobs:
         with:
           name: MidiStackLens-${{ matrix.name }}
           path: build/MidiStackLens_artefacts/Release/VST3/
+
+  # 画面の確認用: Linux で Standalone をビルドし、デモ表示のスクリーンショットを残す
+  preview:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libjack-jackd2-dev libfreetype-dev libfontconfig1-dev \
+            libx11-dev libxcomposite-dev libxcursor-dev libxext-dev libxinerama-dev libxrandr-dev libxrender-dev \
+            xvfb imagemagick fonts-noto-cjk
+
+      - name: Build standalone
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --config Release --target MidiStackLens_Standalone --parallel 4
+
+      - name: Screenshot
+        run: |
+          APP="build/MidiStackLens_artefacts/Release/Standalone/MIDI Stack Lens"
+          for theme in light; do
+            xvfb-run -a -s "-screen 0 1280x900x24" bash -c "MSL_DEMO=1 \"$APP\" & sleep 9; import -window root preview-$theme.png; kill %1 || true"
+          done
+
+      - name: Upload screenshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: MidiStackLens-preview
+          path: preview-*.png

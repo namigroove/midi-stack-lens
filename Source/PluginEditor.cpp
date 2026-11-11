@@ -89,6 +89,9 @@ MidiStackView::MidiStackView (MidiStackLensProcessor& p) : proc (p)
     }
     updateChord (now + 1.0);
 
+    demo = juce::SystemStats::getEnvironmentVariable ("MSL_DEMO", {}) == "1";
+    demoStart = now + 0.5;
+
     setOpaque (true);
     startTimerHz (60);
 }
@@ -492,6 +495,31 @@ void MidiStackView::copyProgression()
     copiedAt = nowSeconds();
 }
 
+void MidiStackView::runDemo (double now)
+{
+    struct Step { std::vector<int> notes; std::vector<int> vels; };
+    static const std::vector<Step> steps = {
+        { { 48, 55, 64, 71 },     { 84, 70, 76, 98 } },        // CM7 オープン
+        { { 45, 55, 60, 64 },     { 80, 66, 72, 94 } },        // Am7
+        { { 50, 60, 64, 65, 69 }, { 86, 64, 70, 72, 100 } },   // Dm9
+        { { 47, 50, 55, 65 },     { 82, 68, 70, 96 } },        // G7/B
+        { { 55, 60, 64, 71 },     { 78, 70, 74, 104 } },       // CM7 ドロップ2(押さえたまま)
+    };
+
+    const int target = juce::jmin ((int) steps.size() - 1, (int) std::floor ((now - demoStart) / 0.6));
+    while (demoStep < target)
+    {
+        if (demoStep >= 0)
+            for (int n : steps[(size_t) demoStep].notes)
+                apply ({ (uint8_t) n, 0, 0 }, now);
+
+        ++demoStep;
+        const auto& st = steps[(size_t) demoStep];
+        for (size_t i = 0; i < st.notes.size(); ++i)
+            apply ({ (uint8_t) st.notes[i], (uint8_t) st.vels[i], 1 }, now);
+    }
+}
+
 void MidiStackView::mouseDown (const juce::MouseEvent& e)
 {
     if (copyChip.contains (e.position))
@@ -505,6 +533,9 @@ void MidiStackView::timerCallback()
     const double now = nowSeconds();
     const double dt = juce::jlimit (0.0, 0.25, now - lastTick);
     lastTick = now;
+
+    if (demo)
+        runDemo (now);
 
     MidiStackLensProcessor::MidiEvt e;
     while (proc.popEvent (e))
