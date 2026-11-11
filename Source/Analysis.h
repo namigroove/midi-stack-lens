@@ -40,7 +40,7 @@ struct KeyEstimate
     double confidence = 0.0;  // 相関係数(0〜1)
 };
 
-// 音名ごとの重み(弾いた回数や長さ)からキーを推定する(Krumhansl-Schmuckler)
+// 音名ごとの重み(弾いた回数や長さ)からキーを推定する(キープロファイルとの相関)
 KeyEstimate estimateKey (const std::array<double, 12>& pcWeights);
 
 // キーの中でのディグリー表記("V7", "ii7", "♭VII" …)。コード名が無いときは空

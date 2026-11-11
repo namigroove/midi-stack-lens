@@ -141,8 +141,10 @@ VoicingInfo analyzeVoicing (const std::vector<int>& notes, const ChordResult& ch
 // ---- キー推定 ------------------------------------------------------------------------
 KeyEstimate estimateKey (const std::array<double, 12>& w)
 {
-    static const double majorProfile[12] = { 6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88 };
-    static const double minorProfile[12] = { 6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17 };
+    // Temperley のキープロファイル(Kostka-Payne コーパス由来)。
+    // Krumhansl-Kessler のものより、コード進行だけの入力で平行調・属調と取り違えにくい。
+    static const double majorProfile[12] = { 0.748, 0.060, 0.488, 0.082, 0.670, 0.460, 0.096, 0.715, 0.104, 0.366, 0.057, 0.400 };
+    static const double minorProfile[12] = { 0.712, 0.084, 0.474, 0.618, 0.049, 0.460, 0.105, 0.747, 0.404, 0.067, 0.133, 0.330 };
 
     KeyEstimate best;
 

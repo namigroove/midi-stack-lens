@@ -60,8 +60,8 @@ jobs:
       - name: Screenshot
         run: |
           APP="build/MidiStackLens_artefacts/Release/Standalone/MIDI Stack Lens"
-          for theme in light; do
-            xvfb-run -a -s "-screen 0 1280x900x24" bash -c "MSL_DEMO=1 \"$APP\" & sleep 9; import -window root preview-$theme.png; kill %1 || true"
+          for theme in light dark; do
+            xvfb-run -a -s "-screen 0 1280x900x24" bash -c "MSL_DEMO=1 MSL_DEMO_THEME=$theme \"$APP\" & sleep 9; import -window root preview-$theme.png; kill %1 || true"
           done
 
       - name: Upload screenshot

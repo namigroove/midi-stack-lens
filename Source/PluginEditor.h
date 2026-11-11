@@ -135,6 +135,7 @@ private:
     std::vector<ChordLabel> labels;
     std::vector<ProgItem> progression;
     std::array<uint8_t, 128> held {};
+    std::array<double, 128> heldSince {};
 
     std::vector<int> lastNotes;
     double changedAt = 0.0;

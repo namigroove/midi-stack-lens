@@ -82,6 +82,24 @@ int main()
         w[0] = 1.0;
         check (! msl::estimateKey (w).valid, "one pitch class is not enough");
     }
+    {
+        // コード進行だけ(CM7 Am7 Dm9 G7/B CM7)でも C メジャーになる
+        std::array<double, 12> w {};
+        for (int n : { 48, 55, 64, 71, 45, 55, 60, 64, 50, 60, 64, 65, 69, 47, 50, 55, 65, 55, 60, 64, 71 })
+            w[(size_t) (n % 12)] += 1.0;
+        auto k = msl::estimateKey (w);
+        check (k.valid && k.tonicPc == 0 && ! k.minor, "CM7 Am7 Dm9 G7/B CM7 -> C major",
+               std::to_string (k.tonicPc) + (k.minor ? "m" : ""));
+    }
+    {
+        // Am Dm E7 Am は A マイナー
+        std::array<double, 12> w {};
+        for (int n : { 45, 48, 52, 50, 53, 57, 52, 56, 59, 62, 45, 48, 52 })
+            w[(size_t) (n % 12)] += 1.0;
+        auto k = msl::estimateKey (w);
+        check (k.valid && k.tonicPc == 9 && k.minor, "Am Dm E7 Am -> A minor",
+               std::to_string (k.tonicPc) + (k.minor ? "m" : ""));
+    }
 
     // ディグリーと機能
     {

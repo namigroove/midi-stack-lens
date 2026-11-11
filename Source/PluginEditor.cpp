@@ -90,6 +90,9 @@ MidiStackView::MidiStackView (MidiStackLensProcessor& p) : proc (p)
     updateChord (now + 1.0);
 
     demo = juce::SystemStats::getEnvironmentVariable ("MSL_DEMO", {}) == "1";
+    if (demo && juce::SystemStats::getEnvironmentVariable ("MSL_DEMO_THEME", {}) == "dark")
+        if (auto* themeParam = proc.apvts.getParameter ("theme"))
+            themeParam->setValueNotifyingHost (1.0f);
     demoStart = now + 0.5;
 
     setOpaque (true);
@@ -332,6 +335,7 @@ void MidiStackView::apply (const MidiStackLensProcessor::MidiEvt& e, double now)
                 ++rank;
 
         held[(size_t) n] = e.vel;
+        heldSince[(size_t) n] = now;
         bars.push_back ({ n, (int) e.vel, rank, now, -1.0 });
         pcWeight[(size_t) (n % 12)] += 1.0;
     }
@@ -419,13 +423,14 @@ void MidiStackView::updateChord (double now)
 
 void MidiStackView::updateKey (double now, double dt)
 {
-    // 押さえている間も少しずつ重みを足す(長い音ほど効く)。全体は約30秒で薄れていく
+    // 押さえ始めの1.5秒だけ少しずつ重みを足す(長い音は少し効くが、伸ばしっぱなしの和音にキーが引っ張られない)。
+    // 全体は約30秒で薄れていく
     const double decay = std::exp (-dt / 30.0);
     for (int pc = 0; pc < 12; ++pc)
         pcWeight[(size_t) pc] *= decay;
     for (int n = 0; n < 128; ++n)
-        if (held[(size_t) n])
-            pcWeight[(size_t) (n % 12)] += dt * 0.8;
+        if (held[(size_t) n] && now - heldSince[(size_t) n] < 1.5)
+            pcWeight[(size_t) (n % 12)] += dt * 0.5;
 
     if (now - lastKeyCheck < 0.25)
         return;
