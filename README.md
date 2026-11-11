@@ -2,6 +2,8 @@
 
 MIDIの積み方(ボイシング)を鍵盤で見るためのVST3。音は出さず、届いたMIDIをそのまま素通しします。
 
+![MIDI Stack Lens の画面](docs/preview-light.png)
+
 ## できること
 
 画面は5つのパネルに分かれています。
@@ -44,6 +46,8 @@ ctest --test-dir build -C Release     # コード判定・ボイシング分析�
 - GitHub に置けば `.github/workflows/build.yml` が Windows と Mac のVST3を自動でビルドします
 
 ## 使い方のメモ
+
+- Standalone 版を環境変数 `MSL_DEMO=1` を付けて起動すると、MIDI なしでコードを順に鳴らした状態を表示します(画面の確認用。上の画像もこれで撮っています)。
 
 - DAW ではインストゥルメントとして立ち上げて、MIDIトラックの出力先にするか、見たいトラックのMIDIを送り込みます。
   MIDIはそのまま出力に素通しされます。
