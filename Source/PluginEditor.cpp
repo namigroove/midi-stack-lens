@@ -1,6 +1,7 @@
 #include "PluginEditor.h"
 
 #include "VideoExport.h"
+#include "BinaryData.h"
 
 #include <algorithm>
 #include <cmath>
@@ -12,26 +13,29 @@ namespace
 const juce::Colour kBlue   { 0xff396cdf };
 const juce::Colour kOrange { 0xffff9a2e };
 
-juce::Font uiFont (float height, bool bold = false)
+// 画面の文字はすべて「x12y12pxMaruMinya(マルミーニャ)」。ttf はプラグインに埋め込んでいる
+juce::Typeface::Ptr appTypeface()
 {
-#if JUCE_MAJOR_VERSION >= 8
-    juce::Font f { juce::FontOptions { height } };
-#else
-    juce::Font f { height };
-#endif
-    return bold ? f.boldened() : f;
+    static const juce::Typeface::Ptr tf = juce::Typeface::createSystemTypefaceFor (
+        BinaryData::x12y12pxMaruMinya_ttf, (size_t) BinaryData::x12y12pxMaruMinya_ttfSize);
+    return tf;
 }
 
-// 見出しや数値用の等幅フォント(英数字だけに使う)
-juce::Font monoFont (float height, bool bold = false)
+juce::Font makeFont (float height)
 {
-    const int style = bold ? juce::Font::bold : juce::Font::plain;
+    const auto tf = appTypeface();
 #if JUCE_MAJOR_VERSION >= 8
-    return juce::Font { juce::FontOptions { juce::Font::getDefaultMonospacedFontName(), height, style } };
+    return juce::Font { juce::FontOptions { tf }.withHeight (height) };
 #else
-    return juce::Font { juce::Font::getDefaultMonospacedFontName(), height, style };
+    return juce::Font (tf).withHeight (height);
 #endif
 }
+
+// ドットの文字には太字がないので、bold は指定しても同じ字で出る(にじませない)
+juce::Font uiFont (float height, bool /*bold*/ = false) { return makeFont (height); }
+
+// 見出しや数値用(いまは本文と同じ字)
+juce::Font monoFont (float height, bool /*bold*/ = false) { return makeFont (height); }
 
 juce::String u8 (const char* s) { return juce::String::fromUTF8 (s); }
 juce::String u8 (const std::string& s) { return juce::String::fromUTF8 (s.c_str()); }
@@ -1565,9 +1569,17 @@ void MidiStackLensEditor::addCombo (juce::ComboBox& cb, const char* paramId)
     comboAttachments.push_back (std::make_unique<ComboAttach> (proc.apvts, paramId, cb));
 }
 
+juce::Font MidiStackLensEditor::AppLookAndFeel::getComboBoxFont (juce::ComboBox&)
+{
+    return uiFont (12.0f);
+}
+
 MidiStackLensEditor::MidiStackLensEditor (MidiStackLensProcessor& p)
     : AudioProcessorEditor (&p), proc (p), view (p)
 {
+    // コンボボックス・メニュー・ボタンなど、部品の文字もマルミーニャにする
+    lnf.setDefaultSansSerifTypeface (appTypeface());
+    juce::LookAndFeel::getDefaultLookAndFeel().setDefaultSansSerifTypeface (appTypeface());
     setLookAndFeel (&lnf);
 
     addCombo (cbNotation, "notation");

@@ -232,7 +232,12 @@ private:
     void showResult (bool ok, const juce::String& message);
 
     MidiStackLensProcessor& proc;
-    juce::LookAndFeel_V4 lnf;
+    // ドットの字は幅があるので、上の帯のコンボボックスは12px(ドット等倍)にして収める
+    struct AppLookAndFeel : juce::LookAndFeel_V4
+    {
+        juce::Font getComboBoxFont (juce::ComboBox&) override;
+    };
+    AppLookAndFeel lnf;
 
     juce::ComboBox cbNotation, cbAccidental, cbKey, cbKeyLabels, cbRange, cbWindow, cbColor, cbTheme;
     juce::ToggleButton tbDegrees, tbHistory, tbScale;

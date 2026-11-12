@@ -37,6 +37,10 @@ juce_add_plugin(MidiStackLens
     VST3_CATEGORIES Instrument Tools
     COPY_PLUGIN_AFTER_BUILD FALSE)
 
+# 画面のフォント(マルミーニャ)を実行ファイルに埋め込む
+juce_add_binary_data(MslFonts SOURCES assets/x12y12pxMaruMinya.ttf)
+set_target_properties(MslFonts PROPERTIES POSITION_INDEPENDENT_CODE TRUE)
+
 target_sources(MidiStackLens PRIVATE
     Source/ChordDetector.cpp
     Source/Analysis.cpp
@@ -57,6 +61,7 @@ target_compile_options(MidiStackLens PRIVATE
 
 target_link_libraries(MidiStackLens
     PRIVATE
+        MslFonts
         juce::juce_audio_utils
     PUBLIC
         juce::juce_recommended_config_flags
@@ -100,7 +105,7 @@ if(MSL_BUILD_EXPORT_DEMO)
         JUCE_USE_CURL=0
         JUCE_DISPLAY_SPLASH_SCREEN=0)
     target_link_libraries(MslExportDemo
-        PRIVATE juce::juce_audio_utils
+        PRIVATE MslFonts juce::juce_audio_utils
         PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
 
     # 録音処理(再生連動・開始/停止・サンプル位置)の確認。ctest でも動く
@@ -120,7 +125,7 @@ if(MSL_BUILD_EXPORT_DEMO)
         JUCE_USE_CURL=0
         JUCE_DISPLAY_SPLASH_SCREEN=0)
     target_link_libraries(MslProcessorRecTest
-        PRIVATE juce::juce_audio_utils
+        PRIVATE MslFonts juce::juce_audio_utils
         PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
     add_test(NAME processor_rec_test COMMAND MslProcessorRecTest)
 endif()
