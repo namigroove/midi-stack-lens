@@ -2,6 +2,8 @@ name: build
 
 on:
   push:
+    branches: ['**']
+    tags: ['v*']
   pull_request:
   workflow_dispatch:
 
@@ -35,6 +37,32 @@ jobs:
         with:
           name: MidiStackLens-${{ matrix.name }}
           path: build/MidiStackLens_artefacts/Release/VST3/
+
+  # タグ(v0.3.1 など)を打つと、Windows / Mac の zip を「Releases」に載せる(ログイン不要でダウンロードできる)
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Zip
+        run: |
+          cd artifacts
+          for d in MidiStackLens-*; do (cd "$d" && zip -r -q "../MIDI-Stack-Lens-${GITHUB_REF_NAME}-${d#MidiStackLens-}.zip" .); done
+          ls -la *.zip
+
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" artifacts/*.zip --repo "$GITHUB_REPOSITORY" \
+            --title "MIDI Stack Lens $GITHUB_REF_NAME" \
+            --notes "ダウンロード: 下の「Assets」から、お使いのOSの zip を選んでください(Windows は Windows-VST3、Mac は macOS-VST3)。入れ方は README の「ダウンロードして使う」を見てください。"
 
   # 画面の確認用: Linux で Standalone をビルドし、デモ表示のスクリーンショットを残す
   preview:

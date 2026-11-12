@@ -47,6 +47,19 @@ MIDIの積み方(ボイシング)を鍵盤で見るためのVST3。音は出さ�
 - 音は、DAWで書き出したWAVを選ぶと動画に合わせます(選ばなければ無音)。「WAVの頭出し」には、WAVの先頭が録音の頭より何秒前かを入れます。DAWが1小節目から書き出していて、途中から録音したときは、最初に入っている値のままで合います。
 - mp4 にまとめる部分は、お使いのPCの **ffmpeg**(無料)を使います。プラグインには入っていません。見つからないときは、場所を選ぶ画面が出ます(Windows: `winget install ffmpeg`、Mac: `brew install ffmpeg`)。
 
+## ダウンロードして使う
+
+**[最新版をダウンロード(Releases)](https://github.com/namigroove/midi-stack-lens/releases/latest)** を開いて、下の「Assets」から自分のOSの zip を選びます。
+
+| OS | ファイル | 入れる場所 |
+|---|---|---|
+| Windows | `…-Windows-VST3.zip` | 中の `MIDI Stack Lens.vst3` を `C:\Program Files\Common Files\VST3\` へ |
+| Mac | `…-macOS-VST3.zip` | 中の `MIDI Stack Lens.vst3` を `~/Library/Audio/Plug-Ins/VST3/` へ |
+
+- 入れたあと、DAW のプラグインを再スキャンしてください。
+- Mac で「開けません」と出るときは、ターミナルで `xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/"MIDI Stack Lens.vst3"` を実行します(署名していないため)。
+- 自分でビルドしたい人は、下の「ビルド」へ。
+
 ## ビルド
 
 CMake と C++17 のコンパイラがあれば、JUCE は自動で取得されます。
